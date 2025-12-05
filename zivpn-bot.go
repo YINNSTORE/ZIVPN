@@ -250,7 +250,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 	}
 
-	msgText := fmt.Sprintf("```\n————————————————————————————————————\n               ZIVPN UDP\n————————————————————————————————————\nDomain         : %s\nCITY           : %s\nISP            : %s\n————————————————————————————————————\n```\nSilakan pilih menu:",
+	msgText := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n             ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n • Domain   : %s\n • City     : %s\n • ISP      : %s\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n```\n👇 Silakan pilih menu dibawah ini:",
 		domain, ipInfo.City, ipInfo.Isp)
 
 	msg := tgbotapi.NewMessage(chatID, msgText)
@@ -386,7 +386,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		
 		ipInfo, _ := getIpInfo() // Abaikan kesalahan, cukup tampilkan kosong jika gagal
 		
-		msg := fmt.Sprintf("```\n————————————————————————————————————\n               ZIVPN UDP\n————————————————————————————————————\nPassword       : %s\nCITY           : %s\nISP            : %s\nDomain         : %s\nExpired On     : %s\n————————————————————————————————————\n```",
+		msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n              ACCOUNT ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nPassword       : %s\nCITY           : %s\nISP            : %s\nDomain         : %s\nExpired On     : %s\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n```",
 			data["password"], ipInfo.City, ipInfo.Isp, data["domain"], data["expired"])
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
