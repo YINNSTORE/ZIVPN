@@ -24,6 +24,8 @@ var ApiKey = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
 type BotConfig struct {
 	BotToken string `json:"bot_token"`
 	AdminID  int64  `json:"admin_id"`
+	Mode     string `json:"mode"`   // "public" or "private"
+	Domain   string `json:"domain"` // Domain from setup
 }
 
 type IpInfo struct {
@@ -65,30 +67,31 @@ func main() {
 
 	for update := range updates {
 		if update.Message != nil {
-			handleMessage(bot, update.Message, config.AdminID)
+			handleMessage(bot, update.Message, config)
 		} else if update.CallbackQuery != nil {
-			handleCallback(bot, update.CallbackQuery, config.AdminID)
+			handleCallback(bot, update.CallbackQuery, config)
 		}
 	}
 }
 
-func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
-	if msg.From.ID != adminID {
-		reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Anda bukan admin.")
+func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, config BotConfig) {
+	// Access Control
+	if config.Mode != "public" && msg.From.ID != config.AdminID {
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Bot ini Private.")
 		sendAndTrack(bot, reply)
 		return
 	}
 
 	state, exists := userStates[msg.From.ID]
 	if exists {
-		handleState(bot, msg, state)
+		handleState(bot, msg, state, config)
 		return
 	}
 
 	if msg.IsCommand() {
 		switch msg.Command() {
 		case "start":
-			showMainMenu(bot, msg.Chat.ID)
+			showMainMenu(bot, msg.Chat.ID, config)
 		default:
 			msg := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal.")
 			sendAndTrack(bot, msg)
@@ -96,8 +99,9 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 	}
 }
 
-func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID int64) {
-	if query.From.ID != adminID {
+func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, config BotConfig) {
+	// Access Control
+	if config.Mode != "public" && query.From.ID != config.AdminID {
 		bot.Request(tgbotapi.NewCallback(query.ID, "Akses Ditolak"))
 		return
 	}
@@ -114,11 +118,11 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 	case query.Data == "menu_list":
 		listUsers(bot, query.Message.Chat.ID)
 	case query.Data == "menu_info":
-		systemInfo(bot, query.Message.Chat.ID)
+		systemInfo(bot, query.Message.Chat.ID, config)
 	case query.Data == "cancel":
 		delete(userStates, query.From.ID)
 		delete(tempUserData, query.From.ID)
-		showMainMenu(bot, query.Message.Chat.ID)
+		showMainMenu(bot, query.Message.Chat.ID, config)
 	case strings.HasPrefix(query.Data, "page_"):
 		parts := strings.Split(query.Data, ":")
 		action := parts[0][5:] // remove "page_"
@@ -142,13 +146,13 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 		sendAndTrack(bot, msg)
 	case strings.HasPrefix(query.Data, "confirm_delete:"):
 		username := strings.TrimPrefix(query.Data, "confirm_delete:")
-		deleteUser(bot, query.Message.Chat.ID, username)
+		deleteUser(bot, query.Message.Chat.ID, username, config)
 	}
 
 	bot.Request(tgbotapi.NewCallback(query.ID, ""))
 }
 
-func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
+func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string, config BotConfig) {
 	userID := msg.From.ID
 	text := strings.TrimSpace(msg.Text)
 
@@ -164,7 +168,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 			sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
 			return
 		}
-		createUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
+		createUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days, config)
 		resetState(userID)
 
 	case "renew_days":
@@ -173,7 +177,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 			sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
 			return
 		}
-		renewUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
+		renewUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days, config)
 		resetState(userID)
 	}
 }
@@ -237,17 +241,12 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	sendAndTrack(bot, msg)
 }
-func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
+func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config BotConfig) {
 	ipInfo, _ := getIpInfo()
-	
-	// Ambil domain dari /info atau default
-	domain := "udp.autoftbot.com"
-	if res, err := apiCall("GET", "/info", nil); err == nil && res["success"] == true {
-		if data, ok := res["data"].(map[string]interface{}); ok {
-			if d, ok := data["domain"].(string); ok && d != "" {
-				domain = d
-			}
-		}
+		// Gunakan domain dari config
+	domain := config.Domain
+	if domain == "" {
+		domain = "(Not Configured)"
 	}
 
 	msgText := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n    MENU ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━\n • Domain   : %s\n • City     : %s\n • ISP      : %s\n━━━━━━━━━━━━━━━━━━━━━\n```\n👇 Silakan pilih menu dibawah ini:", domain, ipInfo.City, ipInfo.Isp)
@@ -369,7 +368,7 @@ func getUsers() ([]UserData, error) {
 	return users, nil
 }
 
-func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
+func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, config BotConfig) {
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": username,
 		"days":     days,
@@ -388,7 +387,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			data["password"], 
 			ipInfo.City, 
 			ipInfo.Isp, 
-			data["domain"], 
+			config.Domain, 
 			data["expired"],
 		)
 		
@@ -396,14 +395,14 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		reply.ParseMode = "Markdown"
 		deleteLastMessage(bot, chatID)
 		bot.Send(reply)
-		showMainMenu(bot, chatID)
+		showMainMenu(bot, chatID, config)
 	} else {
 		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", res["message"]))
-		showMainMenu(bot, chatID)
+		showMainMenu(bot, chatID, config)
 	}
 }
 
-func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
+func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string, config BotConfig) {
 	res, err := apiCall("POST", "/user/delete", map[string]interface{}{
 		"password": username,
 	})
@@ -417,14 +416,14 @@ func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
 		msg := tgbotapi.NewMessage(chatID, "✅ Password berhasil dihapus.")
 		deleteLastMessage(bot, chatID)
 		bot.Send(msg)
-		showMainMenu(bot, chatID)
+		showMainMenu(bot, chatID, config)
 	} else {
 		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", res["message"]))
-		showMainMenu(bot, chatID)
+		showMainMenu(bot, chatID, config)
 	}
 }
 
-func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
+func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, config BotConfig) {
 	res, err := apiCall("POST", "/user/renew", map[string]interface{}{
 		"password": username,
 		"days":     days,
@@ -439,6 +438,12 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		data := res["data"].(map[string]interface{})
 		ipInfo, _ := getIpInfo()
 		
+		// Gunakan domain dari config
+		domain := config.Domain
+		if domain == "" {
+			domain = "(Not Configured)"
+		}
+
 		msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n  ACCOUNT ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━\nPassword   : %s\nCITY       : %s\nISP        : %s\nDomain     : %s\nExpired On : %s\n━━━━━━━━━━━━━━━━━━━━━\n```", 
 			data["password"], 
 			ipInfo.City, 
@@ -451,10 +456,10 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		reply.ParseMode = "Markdown"
 		deleteLastMessage(bot, chatID)
 		bot.Send(reply)
-		showMainMenu(bot, chatID)
+		showMainMenu(bot, chatID, config)
 	} else {
 		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", res["message"]))
-		showMainMenu(bot, chatID)
+		showMainMenu(bot, chatID, config)
 	}
 }
 
@@ -490,7 +495,7 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 	}
 }
 
-func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
+func systemInfo(bot *tgbotapi.BotAPI, chatID int64, config BotConfig) {
 	res, err := apiCall("GET", "/info", nil)
 	if err != nil {
 		sendMessage(bot, chatID, "❌ Error API: "+err.Error())
@@ -503,13 +508,13 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 		ipInfo, _ := getIpInfo()
 
 		msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n           INFO ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━\nDomain         : %s\nIP Public      : %s\nPort           : %s\nService        : %s\nCITY           : %s\nISP            : %s\n━━━━━━━━━━━━━━━━━━━━━\n```",
-			data["domain"], data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp)
+			config.Domain, data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp)
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
 		deleteLastMessage(bot, chatID)
 		bot.Send(reply)
-		showMainMenu(bot, chatID)
+		showMainMenu(bot, chatID, config)
 	} else {
 		sendMessage(bot, chatID, "❌ Gagal mengambil info.")
 	}
