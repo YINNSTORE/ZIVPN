@@ -146,9 +146,11 @@ echo -ne "${BOLD}Telegram Bot Configuration${RESET}\n"
 echo -ne "${GRAY}(Leave empty to skip)${RESET}\n"
 read -p "Bot Token: " bot_token
 read -p "Admin ID : " admin_id
+read -p "Bot Mode (public/private) [default: private]: " bot_mode
+bot_mode=${bot_mode:-private}
 
 if [[ -n "$bot_token" ]] && [[ -n "$admin_id" ]]; then
-  echo "{\"bot_token\": \"$bot_token\", \"admin_id\": $admin_id}" > /etc/zivpn/bot-config.json
+  echo "{\"bot_token\": \"$bot_token\", \"admin_id\": $admin_id, \"mode\": \"$bot_mode\", \"domain\": \"$domain\"}" > /etc/zivpn/bot-config.json
   
   run_silent "Downloading Bot" "wget -q https://raw.githubusercontent.com/AutoFTbot/ZiVPN/main/zivpn-bot.go -O /etc/zivpn/api/zivpn-bot.go"
   
@@ -199,4 +201,5 @@ echo -e "${BOLD}Installation Complete${RESET}"
 echo -e "Domain  : ${CYAN}$domain${RESET}"
 echo -e "API     : ${CYAN}Port 8080${RESET}"
 echo -e "Token   : ${CYAN}$api_key${RESET}"
+echo -e "Dev     : ${CYAN}https://t.me/AutoFTBot${RESET}"
 echo ""
