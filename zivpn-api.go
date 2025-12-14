@@ -18,7 +18,7 @@ const (
 	UserDB     = "/etc/zivpn/users.json"
 	DomainFile = "/etc/zivpn/domain"
 	ApiKeyFile = "/etc/zivpn/apikey"
-	Port       = ":8080"
+	Port       = ":6969"
 )
 
 var AuthToken = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
