@@ -1,13 +1,16 @@
 package main
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +21,7 @@ const (
 	UserDB     = "/etc/zivpn/users.json"
 	DomainFile = "/etc/zivpn/domain"
 	ApiKeyFile = "/etc/zivpn/apikey"
-	Port       = ":6969"
+	Port       = ":8080"
 )
 
 var AuthToken = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
@@ -65,6 +68,8 @@ func main() {
 	http.HandleFunc("/api/user/renew", authMiddleware(renewUser))
 	http.HandleFunc("/api/users", authMiddleware(listUsers))
 	http.HandleFunc("/api/info", authMiddleware(getSystemInfo))
+	http.HandleFunc("/api/backup", authMiddleware(backupData))
+	http.HandleFunc("/api/restore", authMiddleware(restoreData))
 
 	go monitorUserLimits()
 
@@ -552,4 +557,160 @@ func saveUsers(users []UserStore) error {
 func restartService() error {
 	cmd := exec.Command("systemctl", "restart", "zivpn.service")
 	return cmd.Run()
+}
+
+// --- Backup & Restore ---
+
+func backupData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"zivpn-backup.zip\"")
+
+	zipWriter := zip.NewWriter(w)
+	defer zipWriter.Close()
+
+	// Backup /etc/zivpn
+	if err := zipSource(zipWriter, "/etc/zivpn", ""); err != nil {
+		log.Println("Backup error:", err)
+		return // Header already sent, can't send JSON error
+	}
+}
+
+func restoreData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
+		return
+	}
+
+	var src io.Reader
+	file, _, err := r.FormFile("backup_file")
+	if err == nil {
+		defer file.Close()
+		src = file
+	} else {
+		if r.Body == nil {
+			jsonResponse(w, http.StatusBadRequest, false, "No file provided", nil)
+			return
+		}
+		src = r.Body
+		defer r.Body.Close()
+	}
+
+	// Save to temp file
+	tempFile, err := ioutil.TempFile("", "zivpn-restore-*.zip")
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, false, "Gagal membuat temp file", nil)
+		return
+	}
+	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
+
+	if _, err := io.Copy(tempFile, src); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, false, "Gagal menyimpan file upload", nil)
+		return
+	}
+
+	// Unzip to /etc/zivpn
+	if err := unzipSource(tempFile.Name(), "/etc/zivpn"); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, false, "Gagal mengekstrak backup: "+err.Error(), nil)
+		return
+	}
+
+	// Restart Service
+	if err := restartService(); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, false, "Gagal merestart service setelah restore", nil)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, true, "Restore berhasil", nil)
+}
+
+func zipSource(w *zip.Writer, source, prefix string) error {
+	return filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+
+		header.Name = filepath.Join(prefix, strings.TrimPrefix(path, source))
+
+		if info.IsDir() {
+			header.Name += "/"
+		} else {
+			header.Method = zip.Deflate
+		}
+
+		writer, err := w.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		_, err = io.Copy(writer, file)
+		return err
+	})
+}
+
+func unzipSource(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		fpath := filepath.Join(dest, f.Name)
+
+		// Check for ZipSlip
+		if !strings.HasPrefix(fpath, filepath.Clean(dest)+string(os.PathSeparator)) {
+			return fmt.Errorf("illegal file path: %s", fpath)
+		}
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(fpath, os.ModePerm)
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+			return err
+		}
+
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			return err
+		}
+
+		_, err = io.Copy(outFile, rc)
+
+		outFile.Close()
+		rc.Close()
+
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
