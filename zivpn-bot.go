@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,7 +24,7 @@ import (
 
 const (
 	BotConfigFile = "/etc/zivpn/bot-config.json"
-	ApiUrl        = "http://127.0.0.1:6969/api"
+	ApiUrl        = "http://127.0.0.1:8080/api"
 	ApiKeyFile    = "/etc/zivpn/apikey"
 	DomainFile    = "/etc/zivpn/domain"
 )
@@ -115,6 +119,14 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, config *BotConfi
 		switch msg.Command() {
 		case "start":
 			showMainMenu(bot, msg.Chat.ID, config)
+		case "backup":
+			if msg.From.ID == config.AdminID {
+				performBackup(bot, msg.Chat.ID)
+			}
+		case "restore":
+			if msg.From.ID == config.AdminID {
+				performRestore(bot, msg, config)
+			}
 		default:
 			replyError(bot, msg.Chat.ID, "Perintah tidak dikenal.")
 		}
@@ -679,4 +691,103 @@ func getUsers() ([]UserData, error) {
 	dataBytes, _ := json.Marshal(res["data"])
 	json.Unmarshal(dataBytes, &users)
 	return users, nil
+}
+
+// --- Backup & Restore ---
+
+func performBackup(bot *tgbotapi.BotAPI, chatID int64) {
+	sendMessage(bot, chatID, "⏳ Sedang membuat backup...")
+
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", ApiUrl+"/backup", nil)
+	req.Header.Set("X-API-Key", ApiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		replyError(bot, chatID, "Gagal menghubungi API: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		replyError(bot, chatID, "Gagal membuat backup. Status: "+resp.Status)
+		return
+	}
+
+	// Save to temp file
+	tempFile, err := ioutil.TempFile("", "zivpn-backup-*.zip")
+	if err != nil {
+		replyError(bot, chatID, "Gagal menyimpan file backup: "+err.Error())
+		return
+	}
+	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
+
+	if _, err := io.Copy(tempFile, resp.Body); err != nil {
+		replyError(bot, chatID, "Gagal menulis file backup: "+err.Error())
+		return
+	}
+
+	// Send file to Telegram
+	doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(tempFile.Name()))
+	doc.Caption = "📦 Backup Data ZiVPN"
+	bot.Send(doc)
+}
+
+func performRestore(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, config *BotConfig) {
+	if msg.ReplyToMessage == nil || msg.ReplyToMessage.Document == nil {
+		replyError(bot, msg.Chat.ID, "❌ Reply pesan ini ke file backup (.zip) yang ingin di-restore.")
+		return
+	}
+
+	doc := msg.ReplyToMessage.Document
+	if !strings.HasSuffix(doc.FileName, ".zip") {
+		replyError(bot, msg.Chat.ID, "❌ File harus berformat .zip")
+		return
+	}
+
+	sendMessage(bot, msg.Chat.ID, "⏳ Sedang mendownload dan merestore...")
+
+	// Download file from Telegram
+	fileURL, err := bot.GetFileDirectURL(doc.FileID)
+	if err != nil {
+		replyError(bot, msg.Chat.ID, "Gagal mendapatkan URL file: "+err.Error())
+		return
+	}
+
+	resp, err := http.Get(fileURL)
+	if err != nil {
+		replyError(bot, msg.Chat.ID, "Gagal mendownload file: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	// Create Multipart Request to API
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("backup_file", doc.FileName)
+	if err != nil {
+		replyError(bot, msg.Chat.ID, "Gagal membuat form file: "+err.Error())
+		return
+	}
+	io.Copy(part, resp.Body)
+	writer.Close()
+
+	req, _ := http.NewRequest("POST", ApiUrl+"/restore", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-API-Key", ApiKey)
+
+	client := &http.Client{}
+	apiResp, err := client.Do(req)
+	if err != nil {
+		replyError(bot, msg.Chat.ID, "Gagal mengirim ke API: "+err.Error())
+		return
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode == http.StatusOK {
+		sendMessage(bot, msg.Chat.ID, "✅ Restore berhasil! Service telah direstart.")
+	} else {
+		replyError(bot, msg.Chat.ID, "❌ Restore gagal. Status: "+apiResp.Status)
+	}
 }
