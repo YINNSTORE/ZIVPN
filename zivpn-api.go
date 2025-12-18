@@ -382,12 +382,7 @@ func getSystemInfo(w http.ResponseWriter, r *http.Request) {
 
 	jsonResponse(w, http.StatusOK, true, "System Info", info)
 }
-<<<<<<< HEAD
-=======
 
-
-
->>>>>>> 3cedf70 (Fix bot API port reading logic)
 func checkExpiration(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
@@ -473,8 +468,6 @@ func enableUser(username string) {
 	}
 }
 
-
-// --- Helper Functions ---
 
 func loadConfig() (Config, error) {
 	var config Config
