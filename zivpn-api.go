@@ -398,8 +398,9 @@ func getSystemInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func monitorUserLimits() {
-	userRegex := regexp.MustCompile(`user:\s*(\S+)`)
-	ipRegex := regexp.MustCompile(`source:\s*(\S+)`)
+	// Regex for JSON log format: {"addr": "IP:PORT", "id": "USERNAME", ...}
+	userRegex := regexp.MustCompile(`"id":\s*"([^"]+)"`)
+	ipRegex := regexp.MustCompile(`"addr":\s*"([^"]+)"`)
 
 	for {
 		time.Sleep(10 * time.Second)
@@ -431,8 +432,10 @@ func monitorUserLimits() {
 		activeIps := make(map[string]map[string]bool)
 
 		lines := strings.Split(logContent, "\n")
+
 		for _, l := range lines {
-			if strings.Contains(l, "user:") && strings.Contains(l, "source:") {
+			// Check for JSON fields
+			if strings.Contains(l, "\"id\":") && strings.Contains(l, "\"addr\":") {
 				// Use Regex for robust parsing
 				userMatch := userRegex.FindStringSubmatch(l)
 				ipMatch := ipRegex.FindStringSubmatch(l)
