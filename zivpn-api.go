@@ -421,7 +421,7 @@ func checkExpiration(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, true, fmt.Sprintf("Expiration check complete. Revoked: %d", revokedCount), nil)
 }
 
-func revokeAccess(username string) {
+func revokeAccess(password string) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
@@ -430,7 +430,7 @@ func revokeAccess(username string) {
 		newConfigAuth := []string{}
 		changed := false
 		for _, p := range config.Auth.Config {
-			if p == username {
+			if p == password {
 				changed = true
 			} else {
 				newConfigAuth = append(newConfigAuth, p)
@@ -444,7 +444,7 @@ func revokeAccess(username string) {
 	}
 }
 
-func enableUser(username string) {
+func enableUser(password string) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
@@ -455,14 +455,14 @@ func enableUser(username string) {
 
 	exists := false
 	for _, p := range config.Auth.Config {
-		if p == username {
+		if p == password {
 			exists = true
 			break
 		}
 	}
 
 	if !exists {
-		config.Auth.Config = append(config.Auth.Config, username)
+		config.Auth.Config = append(config.Auth.Config, password)
 		saveConfig(config)
 		restartService()
 	}
