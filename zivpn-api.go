@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -383,7 +382,6 @@ func getSystemInfo(w http.ResponseWriter, r *http.Request) {
 
 	jsonResponse(w, http.StatusOK, true, "System Info", info)
 }
-
 func checkExpiration(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
