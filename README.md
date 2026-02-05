@@ -36,7 +36,7 @@ Jika Anda ingin menggunakan **Paid Bot**, Anda wajib memiliki akun Pakasir.
 Jalankan perintah berikut di terminal VPS Anda (sebagai root):
 
 ```bash
-wget -q https://raw.githubusercontent.com/YINNSTORE/ZiVPN/main/install.sh && chmod +x install.sh && ./install.sh
+wget -q https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main/install.sh && chmod +x install.sh && ./install.sh
 ```
 
 ### Konfigurasi Saat Instalasi
@@ -159,5 +159,5 @@ Jika Anda melihat log seperti:
 Untuk menghapus ZiVPN, API, Bot, dan semua konfigurasi:
 
 ```bash
-wget -q https://raw.githubusercontent.com/YINNSTORE/ZiVPN/main/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh
+wget -q https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh
 ```
