@@ -1,4 +1,11 @@
 #!/bin/bash
+set -euo pipefail
+
+# =========================
+# CONFIG
+# =========================
+REPO_RAW="https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main"
+TS="$(date +%s)"
 
 # Colors
 GREEN="\033[1;32m"
@@ -10,30 +17,60 @@ RESET="\033[0m"
 BOLD="\033[1m"
 GRAY="\033[1;30m"
 
-print_task() {
-  echo -ne "${GRAY}•${RESET} $1..."
-}
+LOG_FILE="/tmp/zivpn_install.log"
 
-print_done() {
-  echo -e "\r${GREEN}✓${RESET} $1      "
-}
-
-print_fail() {
-  echo -e "\r${RED}✗${RESET} $1      "
-  exit 1
-}
+print_task() { echo -ne "${GRAY}•${RESET} $1..."; }
+print_done() { echo -e "\r${GREEN}✓${RESET} $1      "; }
+print_fail() { echo -e "\r${RED}✗${RESET} $1      "; echo -e "${RED}Log:${RESET} $LOG_FILE"; exit 1; }
 
 run_silent() {
   local msg="$1"
   local cmd="$2"
-
   print_task "$msg"
-  bash -c "$cmd" &>/tmp/zivpn_install.log
-  if [ $? -eq 0 ]; then
-    print_done "$msg"
-  else
-    print_fail "$msg (Check /tmp/zivpn_install.log)"
+  bash -c "$cmd" &>"$LOG_FILE" || print_fail "$msg"
+  print_done "$msg"
+}
+
+need_root() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    echo -e "${RED}✗ Run as root!${RESET}"
+    exit 1
   fi
+}
+
+raw_get() {
+  local url="$1"
+  local out="$2"
+  curl -fsSL "${url}?ts=${TS}" -o "$out" &>>"$LOG_FILE"
+}
+
+raw_wget() {
+  local url="$1"
+  local out="$2"
+  wget -q "${url}?ts=${TS}" -O "$out" &>>"$LOG_FILE"
+}
+
+svc_stop_disable_rm() {
+  local s="$1"
+  systemctl stop "$s" &>>"$LOG_FILE" || true
+  systemctl disable "$s" &>>"$LOG_FILE" || true
+  rm -f "/etc/systemd/system/$s" &>>"$LOG_FILE" || true
+}
+
+ufw_allow_safe() {
+  local rule="$1"
+  if command -v ufw >/dev/null 2>&1; then
+    ufw allow "$rule" &>>"$LOG_FILE" || true
+  fi
+}
+
+iptables_add_safe() {
+  local iface="$1"
+  local dports="$2"
+  if iptables -t nat -C PREROUTING -i "$iface" -p udp --dport "$dports" -j DNAT --to-destination :5667 &>>"$LOG_FILE"; then
+    return 0
+  fi
+  iptables -t nat -A PREROUTING -i "$iface" -p udp --dport "$dports" -j DNAT --to-destination :5667 &>>"$LOG_FILE" || true
 }
 
 clear
@@ -41,68 +78,92 @@ echo -e "${BOLD}ZiVPN UDP Installer${RESET}"
 echo -e "${GRAY}YinnStore Edition${RESET}"
 echo ""
 
+need_root
+
 if [[ "$(uname -s)" != "Linux" ]] || [[ "$(uname -m)" != "x86_64" ]]; then
-  print_fail "System not supported (Linux AMD64 only)"
+  echo -e "${RED}✗${RESET} System not supported (Linux AMD64 only)"
+  exit 1
 fi
 
-if [ -f /usr/local/bin/zivpn ]; then
-  echo -e "${YELLOW}! ZiVPN detected. Reinstalling...${RESET}"
-  systemctl stop zivpn.service &>/dev/null
-  systemctl stop zivpn-api.service &>/dev/null
-  systemctl stop zivpn-bot.service &>/dev/null
+# =========================
+# CLEAN OLD (hard reinstall)
+# =========================
+if [[ -f /usr/local/bin/zivpn || -d /etc/zivpn ]]; then
+  echo -e "${YELLOW}! ZiVPN detected. Reinstalling (hard reset)...${RESET}"
+
+  svc_stop_disable_rm "zivpn-bot.service"
+  svc_stop_disable_rm "zivpn-api.service"
+  svc_stop_disable_rm "zivpn.service"
+
+  systemctl daemon-reload &>>"$LOG_FILE" || true
+
+  rm -f /usr/local/bin/zivpn &>>"$LOG_FILE" || true
+  rm -f /etc/zivpn/api/zivpn-api /etc/zivpn/api/zivpn-bot &>>"$LOG_FILE" || true
 fi
 
-run_silent "Updating system" "sudo apt-get update"
-run_silent "Setting Timezone" "sudo timedatectl set-timezone Asia/Jakarta"
+# =========================
+# BASE DEPENDENCIES
+# =========================
+run_silent "Updating system" "apt-get update -y"
+run_silent "Installing base deps" "apt-get install -y curl wget openssl ca-certificates net-tools iptables"
+run_silent "Setting Timezone" "timedatectl set-timezone Asia/Jakarta || true"
 
-if ! command -v go &> /dev/null; then
-  run_silent "Installing dependencies" "sudo apt-get install -y golang git net-tools"
+if ! command -v go &>/dev/null; then
+  run_silent "Installing Golang" "apt-get install -y golang git"
 else
-  print_done "Dependencies ready"
+  print_done "Golang ready"
 fi
 
+# =========================
+# INPUT DOMAIN + API KEY
+# =========================
 echo ""
 echo -ne "${BOLD}Domain Configuration${RESET}\n"
 while true; do
-  read -p "Enter Domain: " domain
-  if [[ -n "$domain" ]]; then
-    break
-  fi
+  read -rp "Enter Domain: " domain
+  [[ -n "${domain:-}" ]] && break
 done
 echo ""
 
 echo -ne "${BOLD}API Key Configuration${RESET}\n"
-generated_key=$(openssl rand -hex 16)
+generated_key="$(openssl rand -hex 16)"
 echo -e "Generated Key: ${CYAN}$generated_key${RESET}"
-read -p "Enter API Key (Press Enter to use generated): " input_key
-if [[ -z "$input_key" ]]; then
-  api_key="$generated_key"
-else
-  api_key="$input_key"
-fi
+read -rp "Enter API Key (Press Enter to use generated): " input_key
+api_key="${input_key:-$generated_key}"
 echo -e "Using Key: ${GREEN}$api_key${RESET}"
 echo ""
 
-systemctl stop zivpn.service &>/dev/null
+# =========================
+# INSTALL CORE + CONFIG
+# =========================
 run_silent "Downloading Core" "wget -q https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-amd64 -O /usr/local/bin/zivpn && chmod +x /usr/local/bin/zivpn"
 
-mkdir -p /etc/zivpn
+mkdir -p /etc/zivpn /etc/zivpn/api
 echo "$domain" > /etc/zivpn/domain
 echo "$api_key" > /etc/zivpn/apikey
-run_silent "Configuring" "wget -q https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main/config.json -O /etc/zivpn/config.json"
+
+print_task "Downloading config.json (anti-cache)"
+raw_wget "${REPO_RAW}/config.json" "/etc/zivpn/config.json" || print_fail "Downloading config.json"
+print_done "Downloading config.json (anti-cache)"
 
 run_silent "Generating SSL" "openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 -subj '/C=ID/ST=Jawa Barat/L=Bandung/O=YINNSTORE/OU=IT Department/CN=$domain' -keyout /etc/zivpn/zivpn.key -out /etc/zivpn/zivpn.crt"
 
-# Find a free API port
+# =========================
+# API PORT (FREE)
+# =========================
 print_task "Finding available API Port"
 API_PORT=8080
 while netstat -tuln | grep -q ":$API_PORT "; do
-    ((API_PORT++))
+  ((API_PORT++))
 done
 echo "$API_PORT" > /etc/zivpn/api_port
 print_done "API Port selected: ${CYAN}$API_PORT${RESET}"
 
-cat >> /etc/sysctl.conf <<END
+# =========================
+# SYSCTL (NO DUPLICATE)
+# =========================
+print_task "Applying sysctl tunings"
+cat >/etc/sysctl.d/99-zivpn.conf <<'EOF'
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 net.ipv4.ip_forward=1
@@ -120,12 +181,16 @@ net.core.netdev_max_backlog=16384
 net.ipv4.udp_mem=65536 131072 262144
 net.ipv4.udp_rmem_min=8192
 net.ipv4.udp_wmem_min=8192
-END
-sysctl -p &>/dev/null
+EOF
+sysctl --system &>>"$LOG_FILE" || true
+print_done "Applying sysctl tunings"
 
-cat <<EOF > /etc/systemd/system/zivpn.service
+# =========================
+# SYSTEMD: CORE SERVICE
+# =========================
+cat >/etc/systemd/system/zivpn.service <<EOF
 [Unit]
-Description=ZIVPN UDP VPN Server
+Description=ZIVPN UDP VPN Server (YinnStore)
 After=network.target
 
 [Service]
@@ -145,19 +210,25 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-mkdir -p /etc/zivpn/api
-run_silent "Setting up API" "wget -q https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main/zivpn-api.go -O /etc/zivpn/api/zivpn-api.go && wget -q https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main/go.mod -O /etc/zivpn/api/go.mod"
+# =========================
+# DOWNLOAD + BUILD API (ANTI-CACHE)
+# =========================
+print_task "Downloading API sources (anti-cache)"
+raw_wget "${REPO_RAW}/zivpn-api.go" "/etc/zivpn/api/zivpn-api.go" || print_fail "Downloading zivpn-api.go"
+raw_wget "${REPO_RAW}/go.mod" "/etc/zivpn/api/go.mod" || print_fail "Downloading go.mod"
+print_done "Downloading API sources (anti-cache)"
 
+print_task "Compiling API"
 cd /etc/zivpn/api
-if go build -o zivpn-api zivpn-api.go &>/dev/null; then
-  print_done "Compiling API"
-else
-  print_fail "Compiling API"
-fi
+rm -f /etc/zivpn/api/zivpn-api &>>"$LOG_FILE" || true
+go env -w GOPROXY=https://proxy.golang.org,direct &>>"$LOG_FILE" || true
+go mod tidy &>>"$LOG_FILE" || true
+go build -o zivpn-api zivpn-api.go &>>"$LOG_FILE" || print_fail "Compiling API"
+print_done "Compiling API"
 
-cat <<EOF > /etc/systemd/system/zivpn-api.service
+cat >/etc/systemd/system/zivpn-api.service <<EOF
 [Unit]
-Description=ZiVPN Golang API Service
+Description=ZiVPN Golang API Service (YinnStore)
 After=network.target zivpn.service
 
 [Service]
@@ -172,46 +243,57 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+# =========================
+# BOT OPTIONAL
+# =========================
 echo ""
 echo -ne "${BOLD}Telegram Bot Configuration${RESET}\n"
 echo -ne "${GRAY}(Leave empty to skip)${RESET}\n"
-read -p "Bot Token: " bot_token
-read -p "Admin ID : " admin_id
+read -rp "Bot Token: " bot_token
+read -rp "Admin ID : " admin_id
 
-if [[ -n "$bot_token" ]] && [[ -n "$admin_id" ]]; then
+if [[ -n "${bot_token:-}" && -n "${admin_id:-}" ]]; then
   echo ""
   echo "Select Bot Type:"
   echo "1) Free (Admin Only / Public Mode)"
   echo "2) Paid (Pakasir Payment Gateway)"
-  read -p "Choice [1]: " bot_type
-  bot_type=${bot_type:-1}
+  read -rp "Choice [1]: " bot_type
+  bot_type="${bot_type:-1}"
 
   if [[ "$bot_type" == "2" ]]; then
-    read -p "Pakasir Project Slug: " pakasir_slug
-    read -p "Pakasir API Key     : " pakasir_key
-    read -p "Daily Price (IDR)   : " daily_price
+    read -rp "Pakasir Project Slug: " pakasir_slug
+    read -rp "Pakasir API Key     : " pakasir_key
+    read -rp "Daily Price (IDR)   : " daily_price
+    daily_price="${daily_price:-0}"
 
-    echo "{\"bot_token\": \"$bot_token\", \"admin_id\": $admin_id, \"mode\": \"public\", \"domain\": \"$domain\", \"pakasir_slug\": \"$pakasir_slug\", \"pakasir_api_key\": \"$pakasir_key\", \"daily_price\": $daily_price}" > /etc/zivpn/bot-config.json
+    cat >/etc/zivpn/bot-config.json <<EOF
+{"bot_token":"$bot_token","admin_id":$admin_id,"mode":"public","domain":"$domain","pakasir_slug":"$pakasir_slug","pakasir_api_key":"$pakasir_key","daily_price":$daily_price}
+EOF
     bot_file="zivpn-paid-bot.go"
   else
-    read -p "Bot Mode (public/private) [default: private]: " bot_mode
-    bot_mode=${bot_mode:-private}
-
-    echo "{\"bot_token\": \"$bot_token\", \"admin_id\": $admin_id, \"mode\": \"$bot_mode\", \"domain\": \"$domain\"}" > /etc/zivpn/bot-config.json
+    read -rp "Bot Mode (public/private) [default: private]: " bot_mode
+    bot_mode="${bot_mode:-private}"
+    cat >/etc/zivpn/bot-config.json <<EOF
+{"bot_token":"$bot_token","admin_id":$admin_id,"mode":"$bot_mode","domain":"$domain"}
+EOF
     bot_file="zivpn-bot.go"
   fi
 
-  run_silent "Downloading Bot" "wget -q https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main/$bot_file -O /etc/zivpn/api/$bot_file"
+  print_task "Downloading Bot source (anti-cache)"
+  raw_wget "${REPO_RAW}/${bot_file}" "/etc/zivpn/api/${bot_file}" || print_fail "Downloading bot source"
+  print_done "Downloading Bot source (anti-cache)"
 
+  print_task "Compiling Bot"
   cd /etc/zivpn/api
-  run_silent "Downloading Bot Deps" "go get github.com/go-telegram-bot-api/telegram-bot-api/v5"
+  rm -f /etc/zivpn/api/zivpn-bot &>>"$LOG_FILE" || true
+  go mod tidy &>>"$LOG_FILE" || true
+  go get github.com/go-telegram-bot-api/telegram-bot-api/v5 &>>"$LOG_FILE" || true
+  go build -o zivpn-bot "${bot_file}" &>>"$LOG_FILE" || print_fail "Compiling Bot"
+  print_done "Compiling Bot"
 
-  if go build -o zivpn-bot "$bot_file" &>/dev/null; then
-    print_done "Compiling Bot"
-
-    cat <<EOF > /etc/systemd/system/zivpn-bot.service
+  cat >/etc/systemd/system/zivpn-bot.service <<EOF
 [Unit]
-Description=ZiVPN Telegram Bot
+Description=ZiVPN Telegram Bot (YinnStore)
 After=network.target zivpn-api.service
 
 [Service]
@@ -225,31 +307,45 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl enable zivpn-bot.service &>/dev/null
-    systemctl start zivpn-bot.service &>/dev/null
-  else
-    print_fail "Compiling Bot"
-  fi
 else
-  print_task "Skipping Bot Setup"
-  echo ""
+  print_done "Skipping Bot Setup"
 fi
 
-run_silent "Starting Services" "systemctl enable zivpn.service && systemctl start zivpn.service && systemctl enable zivpn-api.service && systemctl start zivpn-api.service"
+# =========================
+# ENABLE + START SERVICES
+# =========================
+run_silent "Reloading systemd" "systemctl daemon-reload"
+run_silent "Starting core" "systemctl enable --now zivpn.service"
+run_silent "Starting API"  "systemctl enable --now zivpn-api.service"
 
-# Setup Cron for Auto-Expire
-echo -e "${YELLOW}Setting up Cron Job for Auto-Expire...${NC}"
+if [[ -f /etc/systemd/system/zivpn-bot.service ]]; then
+  run_silent "Starting Bot" "systemctl enable --now zivpn-bot.service"
+fi
+
+# =========================
+# CRON AUTO-EXPIRE (SAFE)
+# =========================
+print_task "Configuring Cron Auto-Expire"
 cron_cmd="0 0 * * * /usr/bin/curl -s -X POST -H \"X-API-Key: \$(cat /etc/zivpn/apikey)\" http://127.0.0.1:\$(cat /etc/zivpn/api_port)/api/cron/expire >> /var/log/zivpn-cron.log 2>&1"
-(crontab -l 2>/dev/null | grep -v "/api/cron/expire"; echo "$cron_cmd") | crontab -
-print_done "Cron Job Configured"
+(crontab -l 2>/dev/null | grep -v "/api/cron/expire" || true; echo "$cron_cmd") | crontab -
+print_done "Configuring Cron Auto-Expire"
 
-iface=$(ip -4 route ls | grep default | grep -Po '(?<=dev )(\S+)' | head -1)
-iptables -t nat -A PREROUTING -i "$iface" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 &>/dev/null
-ufw allow 6000:19999/udp &>/dev/null
-ufw allow 5667/udp &>/dev/null
-ufw allow $API_PORT/tcp &>/dev/null
+# =========================
+# FIREWALL + NAT (SAFE)
+# =========================
+iface="$(ip -4 route ls 2>/dev/null | awk '/default/ {print $5; exit}')"
+iface="${iface:-eth0}"
 
-rm -f "$0" install.tmp install.log &>/dev/null
+iptables_add_safe "$iface" "6000:19999"
+
+ufw_allow_safe "6000:19999/udp"
+ufw_allow_safe "5667/udp"
+ufw_allow_safe "${API_PORT}/tcp"
+
+# =========================
+# FINISH
+# =========================
+rm -f "$0" install.tmp install.log &>>"$LOG_FILE" || true
 
 echo ""
 echo -e "${BOLD}Installation Complete${RESET}"
@@ -258,3 +354,4 @@ echo -e "API     : ${CYAN}$API_PORT${RESET}"
 echo -e "Token   : ${CYAN}$api_key${RESET}"
 echo -e "Dev     : ${CYAN}https://t.me/yinnprovpn${RESET}"
 echo ""
+echo -e "${GRAY}Log: $LOG_FILE${RESET}"
