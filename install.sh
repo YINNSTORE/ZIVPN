@@ -257,17 +257,13 @@ if [[ -n "${bot_token:-}" && -n "${admin_id:-}" ]]; then
   echo "Select Bot Type:"
   echo "1) Free (Admin Only / Public Mode)"
   echo "2) Paid (Pakasir Payment Gateway)"
-  read -rp "Choice [1]: " bot_type
-  bot_type="${bot_type:-1}"
+  read -rp "Choice [2]: " bot_type
+  bot_type="${bot_type:-2}"
 
   if [[ "$bot_type" == "2" ]]; then
-    read -rp "Pakasir Project Slug: " pakasir_slug
-    read -rp "Pakasir API Key     : " pakasir_key
-    read -rp "Daily Price (IDR)   : " daily_price
-    daily_price="${daily_price:-0}"
-
+    # ✅ Pakasir & harga diset dari Admin Panel bot nanti
     cat >/etc/zivpn/bot-config.json <<EOF
-{"bot_token":"$bot_token","admin_id":$admin_id,"mode":"public","domain":"$domain","pakasir_slug":"$pakasir_slug","pakasir_api_key":"$pakasir_key","daily_price":$daily_price}
+{"bot_token":"$bot_token","admin_id":$admin_id,"mode":"public","domain":"$domain","pakasir_slug":"","pakasir_api_key":"","daily_price":0}
 EOF
     bot_file="zivpn-paid-bot.go"
   else
