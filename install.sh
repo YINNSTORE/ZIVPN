@@ -26,7 +26,7 @@ print_fail() {
 run_silent() {
   local msg="$1"
   local cmd="$2"
-  
+
   print_task "$msg"
   bash -c "$cmd" &>/tmp/zivpn_install.log
   if [ $? -eq 0 ]; then
@@ -38,7 +38,7 @@ run_silent() {
 
 clear
 echo -e "${BOLD}ZiVPN UDP Installer${RESET}"
-echo -e "${GRAY}AutoFTbot Edition${RESET}"
+echo -e "${GRAY}YinnStore Edition${RESET}"
 echo ""
 
 if [[ "$(uname -s)" != "Linux" ]] || [[ "$(uname -m)" != "x86_64" ]]; then
@@ -89,9 +89,9 @@ run_silent "Downloading Core" "wget -q https://github.com/zahidbd2/udp-zivpn/rel
 mkdir -p /etc/zivpn
 echo "$domain" > /etc/zivpn/domain
 echo "$api_key" > /etc/zivpn/apikey
-run_silent "Configuring" "wget -q https://raw.githubusercontent.com/AutoFTbot/ZiVPN/main/config.json -O /etc/zivpn/config.json"
+run_silent "Configuring" "wget -q https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main/config.json -O /etc/zivpn/config.json"
 
-run_silent "Generating SSL" "openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 -subj '/C=ID/ST=Jawa Barat/L=Bandung/O=AutoFTbot/OU=IT Department/CN=$domain' -keyout /etc/zivpn/zivpn.key -out /etc/zivpn/zivpn.crt"
+run_silent "Generating SSL" "openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 -subj '/C=ID/ST=Jawa Barat/L=Bandung/O=YINNSTORE/OU=IT Department/CN=$domain' -keyout /etc/zivpn/zivpn.key -out /etc/zivpn/zivpn.crt"
 
 # Find a free API port
 print_task "Finding available API Port"
@@ -146,7 +146,7 @@ WantedBy=multi-user.target
 EOF
 
 mkdir -p /etc/zivpn/api
-run_silent "Setting up API" "wget -q https://raw.githubusercontent.com/AutoFTbot/ZiVPN/main/zivpn-api.go -O /etc/zivpn/api/zivpn-api.go && wget -q https://raw.githubusercontent.com/AutoFTbot/ZiVPN/main/go.mod -O /etc/zivpn/api/go.mod"
+run_silent "Setting up API" "wget -q https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main/zivpn-api.go -O /etc/zivpn/api/zivpn-api.go && wget -q https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main/go.mod -O /etc/zivpn/api/go.mod"
 
 cd /etc/zivpn/api
 if go build -o zivpn-api zivpn-api.go &>/dev/null; then
@@ -190,25 +190,25 @@ if [[ -n "$bot_token" ]] && [[ -n "$admin_id" ]]; then
     read -p "Pakasir Project Slug: " pakasir_slug
     read -p "Pakasir API Key     : " pakasir_key
     read -p "Daily Price (IDR)   : " daily_price
-    
+
     echo "{\"bot_token\": \"$bot_token\", \"admin_id\": $admin_id, \"mode\": \"public\", \"domain\": \"$domain\", \"pakasir_slug\": \"$pakasir_slug\", \"pakasir_api_key\": \"$pakasir_key\", \"daily_price\": $daily_price}" > /etc/zivpn/bot-config.json
     bot_file="zivpn-paid-bot.go"
   else
     read -p "Bot Mode (public/private) [default: private]: " bot_mode
     bot_mode=${bot_mode:-private}
-    
+
     echo "{\"bot_token\": \"$bot_token\", \"admin_id\": $admin_id, \"mode\": \"$bot_mode\", \"domain\": \"$domain\"}" > /etc/zivpn/bot-config.json
     bot_file="zivpn-bot.go"
   fi
-  
-  run_silent "Downloading Bot" "wget -q https://raw.githubusercontent.com/AutoFTbot/ZiVPN/main/$bot_file -O /etc/zivpn/api/$bot_file"
-  
+
+  run_silent "Downloading Bot" "wget -q https://raw.githubusercontent.com/YINNSTORE/ZIVPN/main/$bot_file -O /etc/zivpn/api/$bot_file"
+
   cd /etc/zivpn/api
   run_silent "Downloading Bot Deps" "go get github.com/go-telegram-bot-api/telegram-bot-api/v5"
-  
+
   if go build -o zivpn-bot "$bot_file" &>/dev/null; then
     print_done "Compiling Bot"
-    
+
     cat <<EOF > /etc/systemd/system/zivpn-bot.service
 [Unit]
 Description=ZiVPN Telegram Bot
@@ -256,5 +256,5 @@ echo -e "${BOLD}Installation Complete${RESET}"
 echo -e "Domain  : ${CYAN}$domain${RESET}"
 echo -e "API     : ${CYAN}$API_PORT${RESET}"
 echo -e "Token   : ${CYAN}$api_key${RESET}"
-echo -e "Dev     : ${CYAN}https://t.me/AutoFTBot${RESET}"
+echo -e "Dev     : ${CYAN}https://t.me/yinnprovpn${RESET}"
 echo ""
